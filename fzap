@@ -1,0 +1,101 @@
+API-CONF:
+
+#!/bin/bash
+
+TARGET="https://server.local/login"
+ZAP_API="http://localhost:8080"
+
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+RESULT_FILE="fuzz_results_${TIMESTAMP}.json"
+REPORT_FILE="zap_report_${TIMESTAMP}.html"
+
+curl -s "$ZAP_API/JSON/spider/action/scan/?url=$TARGET" > /dev/null
+
+while true; do
+  STATUS=$(curl -s "$ZAP_API/JSON/spider/view/status/" | jq -r .status)
+  [ "$STATUS" == "100" ] && break
+  sleep 2
+done
+
+MESSAGE_ID=$(curl -s "$ZAP_API/JSON/core/view/messages/?baseurl=$TARGET" | jq -r '.messages[0].id')
+
+if [ "$MESSAGE_ID" == "null" ] || [ -z "$MESSAGE_ID" ]; then
+  echo "Kein Request gefunden für $TARGET"
+  exit 1
+fi
+
+curl -s "$ZAP_API/JSON/core/view/message/?id=$MESSAGE_ID" | jq -r '.message.requestHeader'
+curl -s "$ZAP_API/JSON/core/view/message/?id=$MESSAGE_ID" | jq -r '.message.responseHeader'
+
+curl -s "$ZAP_API/JSON/fuzz/action/scan/?fuzzerId=1&messageId=$MESSAGE_ID" > /dev/null
+sleep 3
+
+SCAN_ID=$(curl -s "$ZAP_API/JSON/fuzz/view/scans/" | jq -r '.scans[0].scanId')
+
+while true; do
+  STATE=$(curl -s "$ZAP_API/JSON/fuzz/view/scans/" | jq -r '.scans[0].state')
+  [ "$STATE" == "stopped" ] && break
+  sleep 3
+done
+
+curl -s "$ZAP_API/JSON/fuzz/view/scanResults/?scanId=$SCAN_ID" -o "$RESULT_FILE"
+curl -s "$ZAP_API/OTHER/core/other/htmlreport/" -o "$REPORT_FILE"
+
+echo "Results: $RESULT_FILE"
+echo "Report:  $REPORT_FILE"
+
+LOG-SCRIPT:
+
+#!/bin/bash
+
+INPUT_FILE="$1"
+REPORT_FILE="fuzz_report_$(date +%Y%m%d_%H%M%S).md"
+
+if [ ! -f "$INPUT_FILE" ]; then
+  echo "Fehlende Datei: $INPUT_FILE"
+  echo "Nutzung: ./fuzz_filter_report.sh fuzz_results.json"
+  exit 1
+fi
+
+echo "# Fuzzing Report – $(date)" > "$REPORT_FILE"
+echo >> "$REPORT_FILE"
+
+echo "## Fehlerhafte Statuscodes (>= 400)" >> "$REPORT_FILE"
+jq -r '.scanResults[] | select(.statusCode >= 400) |
+  "- Payload: \(.payload)
+     Status: \(.statusCode)
+     ID: \(.messageId)"' "$INPUT_FILE" >> "$REPORT_FILE"
+echo >> "$REPORT_FILE"
+
+echo "## Reflected Payloads" >> "$REPORT_FILE"
+jq -r '.scanResults[] | select(.state == "reflected") |
+  "- Payload: \(.payload)
+     State: \(.state)
+     ID: \(.messageId)"' "$INPUT_FILE" >> "$REPORT_FILE"
+echo >> "$REPORT_FILE"
+
+echo "## Lange Antworten (> 1000)" >> "$REPORT_FILE"
+jq -r '.scanResults[] | select(.length > 1000) |
+  "- Payload: \(.payload)
+     Length: \(.length)
+     Status: \(.statusCode)
+     ID: \(.messageId)"' "$INPUT_FILE" >> "$REPORT_FILE"
+echo >> "$REPORT_FILE"
+
+TOTAL=$(jq '.scanResults | length' "$INPUT_FILE")
+echo "## Zusammenfassung" >> "$REPORT_FILE"
+echo "- Gesamtanzahl: $TOTAL" >> "$REPORT_FILE"
+echo "- Erstellt: $(date)" >> "$REPORT_FILE"
+echo >> "$REPORT_FILE"
+
+echo "Report erstellt: $REPORT_FILE"
+
+
+START:
+docker run --rm -u zap -p 8080:8080 zaproxy/zap-stable zap.sh \
+  -daemon \
+  -host 0.0.0.0 \
+  -port 8080 \
+  -config api.disablekey=true \
+  -config api.addrs.addr.name=.* \
+  -config api.addrs.addr.regex=true
