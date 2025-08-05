@@ -1,0 +1,40 @@
+#!/bin/bash
+
+LOCKFILE="backend/requirements.txt"
+OUTPUT_FILE="pythoncsv.txt"
+
+if [ -f "$LOCKFILE" ]; then
+    osv-scanner --lockfile "$LOCKFILE" > "$OUTPUT_FILE" 2>&1
+else
+    echo "Datei nicht gefunden: $LOCKFILE" > "$OUTPUT_FILE"
+fi
+
+#!/bin/bash
+
+LOCKFILE="frontend/package-lock.json"
+OUTPUT_FILE="nodecsv.txt"
+
+if [ -f "$LOCKFILE" ]; then
+    osv-scanner --lockfile "$LOCKFILE" > "$OUTPUT_FILE" 2>&1
+else
+    echo "Datei nicht gefunden: $LOCKFILE" > "$OUTPUT_FILE"
+fi
+
+#!/bin/bash
+
+SCAN_DIR="/opt/"
+OUTPUT_FILE="projektcsv.txt"
+
+trivy fs "$SCAN_DIR" > "$OUTPUT_FILE" 2>&1
+
+
+curl -sSfL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner-linux-amd64 \
+    -o osv-scanner
+chmod +x osv-scanner
+sudo mv osv-scanner /usr/local/bin/osv-scanner
+osv-scanner --version
+
+wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.51.1_Linux-64bit.tar.gz
+tar zxvf trivy_0.51.1_Linux-64bit.tar.gz
+sudo mv trivy /usr/local/bin/trivy
+trivy --version
