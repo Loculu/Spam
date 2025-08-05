@@ -1,0 +1,19 @@
+#!/bin/bash
+
+if [ -z "$1" ]; then
+  echo "Usage: $0 <host>"
+  exit 1
+fi
+
+HOST=$1
+
+testssl --quiet --warnings=batch "$HOST" | grep -E -i \
+  'vulnerable|potentially vulnerable|offered.*(CBC|RC4|3DES|NULL|EXPORT)|Obsoleted CBC|OCSP stapling.*not offered|DNS CAA.*not offered' | \
+  grep -v '(OK)' | awk '
+  /vulnerable|potentially vulnerable/ {print "1-CRITICAL: " $0; next}
+  /Obsoleted CBC|CBC|RC4|3DES|NULL|EXPORT|offered.*BAD/   {print "2-WEAK:     " $0; next}
+  /not offered|not available/                             {print "3-MISSING:  " $0; next}
+  {print "4-OTHER:    " $0}
+' | sort
+
+apt install testssl.sh
